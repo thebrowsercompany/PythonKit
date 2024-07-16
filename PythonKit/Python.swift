@@ -1663,6 +1663,9 @@ public struct PythonFunction {
     /// Called directly by the Python C API
     private var function: PyFunction
 
+    /// Name of the function in Python.
+    private var name: StaticString?
+
     @_disfavoredOverload
     public init(_ fn: @escaping (PythonObject) throws -> PythonConvertible) {
         function = PyFunction { argumentsAsTuple in
@@ -1670,11 +1673,22 @@ public struct PythonFunction {
         }
     }
 
+    @_disfavoredOverload
+    public init(name: StaticString?, _ fn: @escaping (PythonObject) throws -> PythonConvertible) {
+        self.init(fn)
+        self.name = name
+    }
+
     /// For cases where the Swift function should accept more (or less) than one parameter, accept an ordered array of all arguments instead.
     public init(_ fn: @escaping ([PythonObject]) throws -> PythonConvertible) {
         function = PyFunction { argumentsAsTuple in
             return try fn(argumentsAsTuple.map { $0 })
         }
+    }
+
+    public init(name: StaticString?, _ fn: @escaping ([PythonObject]) throws -> PythonConvertible) {
+        self.init(fn)
+        self.name = name
     }
 
     /// For cases where the Swift function should accept keyword arguments as `**kwargs` in Python.
@@ -1690,6 +1704,11 @@ public struct PythonFunction {
             }
             return try fn(argumentsAsTuple.map { $0 }, kwargs)
         }
+    }
+
+    public init(name: StaticString?, _ fn: @escaping ([PythonObject], [(key: String, value: PythonObject)]) throws -> PythonConvertible) {
+        self.init(fn)
+        self.name = name
     }
 }
 
@@ -1714,12 +1733,22 @@ extension PythonFunction : PythonConvertible {
         )
 
         var methodDefinition: UnsafeMutablePointer<PyMethodDef>
-        switch function.callingConvention {
-        case .varArgs:
-            methodDefinition = PythonFunction.sharedMethodDefinition
-        case .varArgsWithKeywords:
-            methodDefinition = PythonFunction.sharedMethodWithKeywordsDefinition
+        if let name {
+            switch function.callingConvention {
+            case .varArgs:
+                methodDefinition = PythonFunction.sharedMethodDefinition(name: name)
+            case .varArgsWithKeywords:
+                methodDefinition = PythonFunction.sharedMethodWithKeywordsDefinition(name: name)
+            }
+        } else {
+            switch function.callingConvention {
+            case .varArgs:
+                methodDefinition = PythonFunction.sharedMethodDefinition
+            case .varArgsWithKeywords:
+                methodDefinition = PythonFunction.sharedMethodWithKeywordsDefinition
+            }
         }
+
         let pyFuncPointer = PyCFunction_NewEx(
             methodDefinition,
             capsulePointer,
@@ -1753,6 +1782,26 @@ fileprivate extension PythonFunction {
         return pointer
     }()
 
+    static func sharedMethodDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
+        let namePointer = UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self)
+
+        let methodImplementationPointer = unsafeBitCast(
+            PythonFunction.sharedMethodImplementation, to: OpaquePointer.self)
+
+        /// The standard calling convention. See Python C API docs
+        let METH_VARARGS = 0x0001 as Int32
+
+        let pointer = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: 1)
+        pointer.pointee = PyMethodDef(
+            ml_name: namePointer,
+            ml_meth: methodImplementationPointer,
+            ml_flags: METH_VARARGS,
+            ml_doc: nil
+        )
+
+        return pointer
+    }
+
     static let sharedMethodWithKeywordsDefinition: UnsafeMutablePointer<PyMethodDef> = {
         let name: StaticString = "pythonkit_swift_function_with_keywords"
         // `utf8Start` is a property of StaticString, thus, it has a stable pointer.
@@ -1775,6 +1824,27 @@ fileprivate extension PythonFunction {
 
         return pointer
     }()
+
+    static func sharedMethodWithKeywordsDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
+        let namePointer = UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self)
+
+        let methodImplementationPointer = unsafeBitCast(
+            PythonFunction.sharedMethodWithKeywordsImplementation, to: OpaquePointer.self)
+
+        /// A combination of flags that supports `**kwargs`. See Python C API docs
+        let METH_VARARGS = 0x0001 as Int32
+        let METH_KEYWORDS = 0x0002 as Int32
+
+        let pointer = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: 1)
+        pointer.pointee = PyMethodDef(
+            ml_name: namePointer,
+            ml_meth: methodImplementationPointer,
+            ml_flags: METH_VARARGS | METH_KEYWORDS,
+            ml_doc: nil
+        )
+
+        return pointer
+    }
 
     private static let sharedMethodImplementation: @convention(c) (
         PyObjectPointer?, PyObjectPointer?
