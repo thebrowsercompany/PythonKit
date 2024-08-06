@@ -51,6 +51,18 @@ let PyImport_ImportModule: @convention(c) (
     PyCCharPointer) -> PyObjectPointer? =
     PythonLibrary.loadSymbol(name: "PyImport_ImportModule")
 
+// The 2nd argument is the api version.
+let PyModule_Create: @convention(c) (
+    PyModuleDefPointer, Int) -> PyObjectPointer =
+    PythonLibrary.loadSymbol(name: "PyModule_Create2")
+
+let PyModule_AddObject: @convention(c) (
+    PyObjectPointer, PyCCharPointer, PyObjectPointer) -> Int =
+    PythonLibrary.loadSymbol(name: "PyModule_AddObject")
+
+let PyType_Ready: @convention(c) (PyTypeObjectPointer) -> Int =
+    PythonLibrary.loadSymbol(name: "PyType_Ready")
+
 let PyEval_GetBuiltins: @convention(c) () -> PyObjectPointer =
     PythonLibrary.loadSymbol(name: "PyEval_GetBuiltins")
 

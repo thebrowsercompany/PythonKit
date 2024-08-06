@@ -1736,9 +1736,9 @@ extension PythonFunction : PythonConvertible {
         if let name {
             switch function.callingConvention {
             case .varArgs:
-                methodDefinition = PythonFunction.sharedMethodDefinition(name: name)
+                methodDefinition = PythonFunction.methodDefinition(name: name)
             case .varArgsWithKeywords:
-                methodDefinition = PythonFunction.sharedMethodWithKeywordsDefinition(name: name)
+                methodDefinition = PythonFunction.methodWithKeywordsDefinition(name: name)
             }
         } else {
             switch function.callingConvention {
@@ -1782,7 +1782,7 @@ fileprivate extension PythonFunction {
         return pointer
     }()
 
-    static func sharedMethodDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
+    static func methodDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
         let namePointer = UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self)
 
         let methodImplementationPointer = unsafeBitCast(
@@ -1825,7 +1825,7 @@ fileprivate extension PythonFunction {
         return pointer
     }()
 
-    static func sharedMethodWithKeywordsDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
+    static func methodWithKeywordsDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
         let namePointer = UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self)
 
         let methodImplementationPointer = unsafeBitCast(
@@ -1910,6 +1910,20 @@ fileprivate extension PythonFunction {
         }
     }
 }
+
+//===----------------------------------------------------------------------===//
+// PythonAwaitableFunction - create async functions in Swift that can be
+// awaited from Python.
+//===----------------------------------------------------------------------===//
+
+final class PyAwaitableFunction {
+
+}
+
+public struct PythonAwaitableFunction {
+
+}
+
 
 extension PythonObject: Error {}
 
