@@ -1916,14 +1916,123 @@ fileprivate extension PythonFunction {
 // awaited from Python.
 //===----------------------------------------------------------------------===//
 
-final class PyAwaitableFunction {
+extension PythonModule {
+    func addObject(_ object: PyObjectPointer, named: StaticString) -> Bool {
+        let module = pythonObject.borrowedPyObject
+        let result = PyModule_AddObject(
+            module,
+            UnsafeRawPointer(named.utf8Start).assumingMemoryBound(to: Int8.self),
+            object)
 
+        guard result >= 0 else {
+            fatalError("Failed to add type to module: \(result)")
+        }
+        return true
+    }
+
+    func addType(_ typeDefinition: PyTypeObjectPointer) -> Bool {
+        let result = PyType_Ready(typeDefinition)
+        guard result >= 0 else {
+            fatalError("Failed to add type to module: \(result)")
+        }
+        return true
+    }
+}
+
+struct PyAwaitableFunction {
+    var ob_base: PyObject
 }
 
 public struct PythonAwaitableFunction {
+    static var registered = false
 
+    static let sharedTypeObject: UnsafeMutablePointer<PyTypeObject> = {
+        let pythonAwaitableFunctionName: StaticString = "PythonKit.Awaitable"
+        let pythonAwaitableFunctionDoc: StaticString = "PythonKit Awaitable Functions"
+
+        let pythonAwaitableFunctionAsyncMethods = UnsafeMutablePointer<PyAsyncMethods>.allocate(capacity: 1)
+        pythonAwaitableFunctionAsyncMethods.pointee = PyAsyncMethods(
+            am_await: nil,
+            am_aiter: nil,
+            am_anext: nil
+        )
+
+        let pythonAwaitableFunctionTypeObject = UnsafeMutablePointer<PyTypeObject>.allocate(capacity: 1)
+        pythonAwaitableFunctionTypeObject.pointee = PyTypeObject(
+            ob_base: PyVarObject(
+                ob_base: PyObject(
+                    ob_refcnt: PyImmortalRefCount,
+                    ob_type: nil
+                ),
+                ob_size: 0
+            ),
+            tp_name: UnsafeRawPointer(pythonAwaitableFunctionName.utf8Start).assumingMemoryBound(to: Int8.self),
+            tp_basicsize: MemoryLayout<PyAwaitableFunction>.size,
+            tp_itemsize: 0,
+            tp_dealloc: nil,
+            tp_vectorcall_offset: 0,
+            tp_getattr: nil,
+            tp_setattr: nil,
+            tp_as_async: pythonAwaitableFunctionAsyncMethods,
+            tp_repr: nil,
+            tp_as_number: nil,
+            tp_as_sequence: nil,
+            tp_as_mapping: nil,
+            tp_hash: nil,
+            tp_call: nil,
+            tp_str: nil,
+            tp_getattro: nil,
+            tp_setattro: nil,
+            tp_as_buffer: nil,
+            tp_flags: PyTPFlagsDefault,
+            tp_doc: UnsafeRawPointer(pythonAwaitableFunctionDoc.utf8Start).assumingMemoryBound(to: Int8.self),
+            tp_traverse: nil,
+            tp_clear: nil,
+            tp_richcompare: nil,
+            tp_weaklistoffset: 0,
+            tp_iter: nil,
+            tp_iternext: nil,
+            tp_methods: nil,
+            tp_members: nil,
+            tp_getset: nil,
+            tp_base: nil,
+            tp_dict: nil,
+            tp_descr_get: nil,
+            tp_descr_set: nil,
+            tp_dictoffset: 0,
+            tp_init: nil,
+            tp_alloc: nil,
+            tp_new: nil,
+            tp_free: nil,
+            tp_is_gc: nil,
+            tp_bases: nil,
+            tp_mro: nil,
+            tp_cache: nil,
+            tp_subclasses: nil,
+            tp_weaklist: nil,
+            tp_del: nil,
+            tp_version_tag: 0,
+            tp_finalize: nil,
+            tp_vectorcall: nil,
+            tp_watched: 0,
+            tp_versions_used: 0)
+
+        return pythonAwaitableFunctionTypeObject
+    }()
+
+    static func ensurePythonAwaitableType(in module: PythonModule) {
+        guard !registered else {
+            return
+        }
+        guard module.addType(PythonAwaitableFunction.sharedTypeObject) else {
+            return
+        }
+        guard module.addObject(PythonAwaitableFunction.sharedTypeObject, named: "Awaitable") else {
+            return
+        }
+        registered = true
+    }
 }
-
 
 extension PythonObject: Error {}
 
