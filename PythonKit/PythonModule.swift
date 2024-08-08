@@ -1,7 +1,9 @@
 //===--PythonModule.swift -------------------------------------------------===//
-// This file defines types related to Python Modules and an interop layer.
+// This file defines a custom extension module for PythonKit.
 //===----------------------------------------------------------------------===//
 
+//===----------------------------------------------------------------------===//
+// Types from the CPython headers and related.
 //===----------------------------------------------------------------------===//
 
 typealias PyModuleDefPointer = UnsafeMutableRawPointer
@@ -26,10 +28,6 @@ let Py_TPFLAGS_HEAPTYPE: UInt64 = (1 << 9)
 // The immortal value is 0xFFFFFFFF.
 let Py_ImmortalRefCount: Int = Int(UInt32.max)
 
-//===----------------------------------------------------------------------===//
-// PythonModule Types.
-//===----------------------------------------------------------------------===//
-
 struct PyObject {
     var ob_refcnt: Int
     var ob_type: UnsafeMutablePointer<PyTypeObject>?
@@ -39,6 +37,10 @@ struct PyVarObject {
     var ob_base: PyObject
     var ob_size: Int
 }
+
+//===----------------------------------------------------------------------===//
+// PythonModule Types.
+//===----------------------------------------------------------------------===//
 
 struct PyModuleDef_Base {
     var ob_base: PyObject
@@ -136,10 +138,12 @@ struct PyTypeObject {
 }
 
 //===----------------------------------------------------------------------===//
-// PythonModule
+// PythonModule for injecting the `pythonkit` extension.
 //===----------------------------------------------------------------------===//
 
 struct PythonModule : PythonConvertible {
+    static let sharedModule = PythonModule()
+
     private static let moduleName: StaticString = "pythonkit"
     private static let moduleDoc: StaticString = "PythonKit Extension Module"
     private static let moduleDef = PyModuleDef(
@@ -168,8 +172,6 @@ struct PythonModule : PythonConvertible {
         let moduleDefinition: UnsafeMutablePointer<PyModuleDef> = .allocate(capacity: 1)
         moduleDefinition.pointee = Self.moduleDef
 
-        _ = Python // Ensure Python is initialized.
-
         let module = PyModule_Create(moduleDefinition, Py_AbiVersion)
         let moduleName = PyUnicode_InternFromString(
             UnsafeRawPointer(Self.moduleName.utf8Start).assumingMemoryBound(to: Int8.self))
@@ -183,6 +185,101 @@ struct PythonModule : PythonConvertible {
     }
 }
 
+// Extension for injecting our PythonAwaitableFunction type.
 extension PythonModule {
+    static let sharedType: UnsafeMutablePointer<PyTypeObject> = {
+        // For __name__ and __doc__.
+        let pythonAwaitableFunctionName: StaticString = "Awaitable"
+        let pythonAwaitableFunctionDoc: StaticString = "PythonKit Awaitable Function"
 
+        // The async methods.
+        let pythonAwaitableFunctionAsyncMethods = UnsafeMutablePointer<PyAsyncMethods>.allocate(capacity: 1)
+        pythonAwaitableFunctionAsyncMethods.pointee = PyAsyncMethods(
+            am_await: PythonAwaitableFunction.next,
+            am_aiter: nil,
+            am_anext: nil,
+            am_send: nil)
+
+        // The methods.
+        let next: StaticString = "next"
+        let pythonAwaitableFunctionMethods = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: 2)
+        pythonAwaitableFunctionMethods[0] = PyMethodDef(
+            ml_name: UnsafeRawPointer(next.utf8Start).assumingMemoryBound(to: Int8.self),
+            ml_meth: unsafeBitCast(PythonAwaitableFunction.next, to: OpaquePointer.self),
+            ml_flags: 0,
+            ml_doc: nil)
+        pythonAwaitableFunctionMethods[1] = PyMethodDef(
+            ml_name: nil, ml_meth: nil, ml_flags: 0, ml_doc: nil) // Sentinel.
+
+        // The type.
+        let pythonAwaitableFunctionType = UnsafeMutablePointer<PyTypeObject>.allocate(capacity: 1)
+        pythonAwaitableFunctionType.initialize(to: PyTypeObject(
+            ob_base: PyVarObject(
+                ob_base: PyObject(
+                    ob_refcnt: Py_ImmortalRefCount,
+                    ob_type: nil
+                ),
+                ob_size: 0
+            ),
+            tp_name: UnsafeRawPointer(pythonAwaitableFunctionName.utf8Start).assumingMemoryBound(to: Int8.self),
+            tp_basicsize: MemoryLayout<PyAwaitableFunction>.size,
+            tp_itemsize: 0,
+            tp_dealloc: PythonAwaitableFunction.dealloc,
+            tp_vectorcall_offset: 0,
+            tp_getattr: nil,
+            tp_setattr: nil,
+            tp_as_async: pythonAwaitableFunctionAsyncMethods,
+            tp_repr: nil,
+            tp_as_number: nil,
+            tp_as_sequence: nil,
+            tp_as_mapping: nil,
+            tp_hash: nil,
+            tp_call: nil,
+            tp_str: nil,
+            tp_getattro: nil,
+            tp_setattro: nil,
+            tp_as_buffer: nil,
+            tp_flags: Py_TPFlagsDefault | Py_TPFLAGS_HEAPTYPE,
+            tp_doc: UnsafeRawPointer(pythonAwaitableFunctionDoc.utf8Start).assumingMemoryBound(to: Int8.self),
+            tp_traverse: nil,
+            tp_clear: nil,
+            tp_richcompare: nil,
+            tp_weaklistoffset: 0,
+            tp_iter: nil,
+            tp_iternext: nil,
+            tp_methods: pythonAwaitableFunctionMethods,
+            tp_members: nil,
+            tp_getset: nil,
+            tp_base: nil,
+            tp_dict: nil,
+            tp_descr_get: nil,
+            tp_descr_set: nil,
+            tp_dictoffset: 0,
+            tp_init: nil,
+            tp_alloc: PyType_GenericAlloc,
+            tp_new: PythonAwaitableFunction.new,
+            tp_free: PyObject_Free,
+            tp_is_gc: nil,
+            tp_bases: nil,
+            tp_mro: nil,
+            tp_cache: nil,
+            tp_subclasses: nil,
+            tp_weaklist: nil,
+            tp_del: nil,
+            tp_version_tag: 0,
+            tp_finalize: nil,
+            tp_vectorcall: nil))
+
+        // Ready the type.
+        guard sharedModule.addType(pythonAwaitableFunctionType) else {
+            fatalError("Failed to add Awaitable type.")
+        }
+
+        // Add the Awaitable object of the type.
+        guard sharedModule.addObject(pythonAwaitableFunctionType, named: "Awaitable") else {
+            fatalError("Failed to add Awaitable object.")
+        }
+
+        return pythonAwaitableFunctionType
+    }()
 }
