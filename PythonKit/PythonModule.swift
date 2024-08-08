@@ -142,8 +142,6 @@ struct PyTypeObject {
 //===----------------------------------------------------------------------===//
 
 struct PythonModule : PythonConvertible {
-    static let sharedModule = PythonModule()
-
     private static let moduleName: StaticString = "pythonkit"
     private static let moduleDoc: StaticString = "PythonKit Extension Module"
     private static let moduleDef = PyModuleDef(
@@ -182,12 +180,19 @@ struct PythonModule : PythonConvertible {
         }
 
         pythonObject = PythonObject(consuming: module)
-    }
-}
 
-// Extension for injecting our PythonAwaitableFunction type.
-extension PythonModule {
-    static let sharedType: UnsafeMutablePointer<PyTypeObject> = {
+        // Ready the type.
+        guard addType(pyAwaitableFunctionType) else {
+            fatalError("Failed to add Awaitable type.")
+        }
+
+        // Add the Awaitable object of the type.
+        guard addObject(pyAwaitableFunctionType, named: "Awaitable") else {
+            fatalError("Failed to add Awaitable object.")
+        }
+    }
+
+    let pyAwaitableFunctionType: UnsafeMutablePointer<PyTypeObject> = {
         // For __name__ and __doc__.
         let pythonAwaitableFunctionName: StaticString = "Awaitable"
         let pythonAwaitableFunctionDoc: StaticString = "PythonKit Awaitable Function"
@@ -269,16 +274,6 @@ extension PythonModule {
             tp_version_tag: 0,
             tp_finalize: nil,
             tp_vectorcall: nil))
-
-        // Ready the type.
-        guard sharedModule.addType(pythonAwaitableFunctionType) else {
-            fatalError("Failed to add Awaitable type.")
-        }
-
-        // Add the Awaitable object of the type.
-        guard sharedModule.addObject(pythonAwaitableFunctionType, named: "Awaitable") else {
-            fatalError("Failed to add Awaitable object.")
-        }
 
         return pythonAwaitableFunctionType
     }()

@@ -1954,7 +1954,7 @@ public struct PythonAwaitableFunction {
     }
 
     static func alloc() -> PyObjectPointer {
-        let type = PythonModule.sharedType
+        let type = Python.module.pyAwaitableFunctionType
         guard let tp_alloc = type.pointee.tp_alloc else {
             fatalError("Failed to allocate AwaitableFunction")
         }
@@ -1968,7 +1968,7 @@ public struct PythonAwaitableFunction {
     }
 
     static func free(_ object: PyObjectPointer) -> Void {
-        let type = PythonModule.sharedType
+        let type = Python.module.pyAwaitableFunctionType
         guard let tp_free = type.pointee.tp_free else {
             fatalError("Failed to deallocate AwaitableFunction")
         }
