@@ -11,5 +11,8 @@ class PythonModuleTests: XCTestCase {
         let pythonKit = Python.import("pythonkit")
         let awaitable = pythonKit.Awaitable()
         XCTAssertNotNil(awaitable)
+
+        let pyAwaitableFunction = PyAwaitableFunction(awaitable)!
+        XCTAssert(pyAwaitableFunction.aw_magic == 0x08675309)
     }
 }

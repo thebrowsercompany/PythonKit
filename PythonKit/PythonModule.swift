@@ -199,11 +199,11 @@ struct PythonModule : PythonConvertible {
 
         // The async methods.
         let pythonAwaitableFunctionAsyncMethods = UnsafeMutablePointer<PyAsyncMethods>.allocate(capacity: 1)
-        pythonAwaitableFunctionAsyncMethods.pointee = PyAsyncMethods(
+        pythonAwaitableFunctionAsyncMethods.initialize(to: PyAsyncMethods(
             am_await: PythonAwaitableFunction.next,
             am_aiter: nil,
             am_anext: nil,
-            am_send: nil)
+            am_send: nil))
 
         // The methods.
         let next: StaticString = "next"

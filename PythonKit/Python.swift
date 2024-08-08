@@ -1949,8 +1949,30 @@ struct PyAwaitableFunction {
     var aw_magic: Int
 }
 
-public struct PythonAwaitableFunction {
+extension PyAwaitableFunction: ConvertibleFromPython {
+    init?(_ pythonObject: PythonObject) {
+        let pyObject = pythonObject.ownedPyObject
+        defer { Py_DecRef(pyObject) }
+
+        self = pyObject.withMemoryRebound(to: PyAwaitableFunction.self, capacity: 1) {
+            $0.pointee
+        }
+    }
+}
+
+struct PythonAwaitableFunction {
     init() {
+    }
+
+    static let new: newfunc = { type, args, kwds in
+        let result = alloc()
+
+        let awaitable = result.withMemoryRebound(to: PyAwaitableFunction.self, capacity: 1) {
+            $0.pointee.aw_magic = 0x08675309
+            return $0.pointee
+        }
+
+        return result
     }
 
     static func alloc() -> PyObjectPointer {
@@ -1967,6 +1989,10 @@ public struct PythonAwaitableFunction {
         return result
     }
 
+    static let dealloc: destructor = { object in
+        free(object)
+    }
+
     static func free(_ object: PyObjectPointer) -> Void {
         let type = Python.module.pyAwaitableFunctionType
         guard let tp_free = type.pointee.tp_free else {
@@ -1974,22 +2000,6 @@ public struct PythonAwaitableFunction {
         }
 
         tp_free(object)
-    }
-
-    static let new: newfunc = { type, args, kwds in
-        let result = alloc()
-
-        let awaitable = result.withMemoryRebound(to: PyAwaitableFunction.self, capacity: 1) {
-            $0.pointee.aw_magic = 0x08675309
-            return $0.pointee
-        }
-        print("awaitable: \(awaitable)")
-
-        return result
-    }
-
-    static let dealloc: destructor = { object in
-        free(object)
     }
 
     static let next: unaryfunc = { object in
