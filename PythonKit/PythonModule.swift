@@ -7,14 +7,24 @@
 typealias PyModuleDefPointer = UnsafeMutableRawPointer
 typealias PyTypeObjectPointer = UnsafeMutableRawPointer
 
+typealias allocfunc = @convention(c) (PyTypeObjectPointer, Int) -> PyObjectPointer?
+typealias destructor = @convention(c) (PyObjectPointer) -> Void
+typealias freefunc = @convention(c) (UnsafeMutableRawPointer) -> Void
+typealias newfunc = @convention(c) (PyTypeObjectPointer, PyObjectPointer, PyObjectPointer) -> PyObjectPointer?
+typealias sendfunc = @convention(c) (PyObjectPointer, PyObjectPointer, PyObjectPointer) -> Int
+typealias unaryfunc = @convention(c) (PyObjectPointer) -> PyObjectPointer?
+
 // This will be 3 for the lifetime of Python 3. See PEP-384.
-let PyAbiVersion: Int = 3
+let Py_AbiVersion: Int = 3
 
 // From the C headers (we're not stackless).
-let PyTPFlagsDefault: Int = 0
+let Py_TPFlagsDefault: UInt64 = 0
+
+// Our type is dynamically allocated.
+let Py_TPFLAGS_HEAPTYPE: UInt64 = (1 << 9)
 
 // The immortal value is 0xFFFFFFFF.
-let PyImmortalRefCount: Int = Int(UInt32.max)
+let Py_ImmortalRefCount: Int = Int(UInt32.max)
 
 //===----------------------------------------------------------------------===//
 // PythonModule Types.
@@ -22,7 +32,7 @@ let PyImmortalRefCount: Int = Int(UInt32.max)
 
 struct PyObject {
     var ob_refcnt: Int
-    var ob_type: OpaquePointer?
+    var ob_type: UnsafeMutablePointer<PyTypeObject>?
 }
 
 struct PyVarObject {
@@ -59,9 +69,10 @@ struct PyModuleDef {
 //===----------------------------------------------------------------------===//
 
 struct PyAsyncMethods {
-    var am_await: OpaquePointer?
-    var am_aiter: OpaquePointer?
-    var am_anext: OpaquePointer?
+    var am_await: unaryfunc?
+    var am_aiter: unaryfunc?
+    var am_anext: unaryfunc?
+    var am_send: sendfunc?
 }
 
 struct PyGetSetDef {
@@ -77,8 +88,8 @@ struct PyTypeObject {
     var tp_name: UnsafePointer<Int8>
     var tp_basicsize: Int
     var tp_itemsize: Int
-    var tp_dealloc: OpaquePointer?
-    var tp_vectorcall_offset: Int?
+    var tp_dealloc: destructor?
+    var tp_vectorcall_offset: Int
     var tp_getattr: OpaquePointer?
     var tp_setattr: OpaquePointer?
     var tp_as_async: UnsafePointer<PyAsyncMethods>?
@@ -92,7 +103,7 @@ struct PyTypeObject {
     var tp_getattro: OpaquePointer?
     var tp_setattro: OpaquePointer?
     var tp_as_buffer: OpaquePointer?
-    var tp_flags: Int
+    var tp_flags: UInt64
     var tp_doc: UnsafePointer<Int8>?
     var tp_traverse: OpaquePointer?
     var tp_clear: OpaquePointer?
@@ -109,9 +120,9 @@ struct PyTypeObject {
     var tp_descr_set: OpaquePointer?
     var tp_dictoffset: Int
     var tp_init: OpaquePointer?
-    var tp_alloc: OpaquePointer?
-    var tp_new: OpaquePointer?
-    var tp_free: OpaquePointer?
+    var tp_alloc: allocfunc?
+    var tp_new: newfunc?
+    var tp_free: freefunc?
     var tp_is_gc: OpaquePointer?
     var tp_bases: OpaquePointer?
     var tp_mro: OpaquePointer?
@@ -122,8 +133,6 @@ struct PyTypeObject {
     var tp_version_tag: UInt
     var tp_finalize: OpaquePointer?
     var tp_vectorcall: OpaquePointer?
-    var tp_watched: UInt8
-    var tp_versions_used: UInt16
 }
 
 //===----------------------------------------------------------------------===//
@@ -131,11 +140,12 @@ struct PyTypeObject {
 //===----------------------------------------------------------------------===//
 
 struct PythonModule : PythonConvertible {
-    private static let moduleName: StaticString = "PythonKit"
+    private static let moduleName: StaticString = "pythonkit"
+    private static let moduleDoc: StaticString = "PythonKit Extension Module"
     private static let moduleDef = PyModuleDef(
         m_base: PyModuleDef_Base(
             ob_base: PyObject(
-                ob_refcnt: PyImmortalRefCount,
+                ob_refcnt: Py_ImmortalRefCount,
                 ob_type: nil
             ),
             m_init: nil,
@@ -143,7 +153,7 @@ struct PythonModule : PythonConvertible {
             m_copy: nil
         ),
         m_name: UnsafeRawPointer(moduleName.utf8Start).assumingMemoryBound(to: Int8.self),
-        m_doc: nil,
+        m_doc: UnsafeRawPointer(moduleDoc.utf8Start).assumingMemoryBound(to: Int8.self),
         m_size: -1,
         m_methods: nil,
         m_slots: nil,
@@ -160,7 +170,19 @@ struct PythonModule : PythonConvertible {
 
         _ = Python // Ensure Python is initialized.
 
-        let pyModPointer = PyModule_Create(moduleDefinition, PyAbiVersion)
-        pythonObject = PythonObject(consuming: pyModPointer)
+        let module = PyModule_Create(moduleDefinition, Py_AbiVersion)
+        let moduleName = PyUnicode_InternFromString(
+            UnsafeRawPointer(Self.moduleName.utf8Start).assumingMemoryBound(to: Int8.self))
+        let modules = PyImport_GetModuleDict()
+        let success = _PyImport_FixupExtensionObject(module, moduleName, moduleName, modules)
+        guard success == 0 else {
+            fatalError("Failed to fixup extension object.")
+        }
+
+        pythonObject = PythonObject(consuming: module)
     }
+}
+
+extension PythonModule {
+
 }

@@ -1941,27 +1941,51 @@ extension PythonModule {
 
 struct PyAwaitableFunction {
     var ob_base: PyObject
+    var aw_magic: Int
 }
 
 public struct PythonAwaitableFunction {
-    static var registered = false
+    static var ready = false
 
-    static let sharedTypeObject: UnsafeMutablePointer<PyTypeObject> = {
-        let pythonAwaitableFunctionName: StaticString = "PythonKit.Awaitable"
+    var awaitable: PythonObject?
+
+    init() {
+        if !Self.ready {
+            PythonAwaitableFunction.readyType(in: PythonAwaitableFunction.sharedModule)
+        }
+    }
+}
+
+fileprivate extension PythonAwaitableFunction {
+
+    static let sharedModule = PythonModule()
+
+    static let sharedType: UnsafeMutablePointer<PyTypeObject> = {
+        let pythonAwaitableFunctionName: StaticString = "Awaitable"
         let pythonAwaitableFunctionDoc: StaticString = "PythonKit Awaitable Functions"
 
         let pythonAwaitableFunctionAsyncMethods = UnsafeMutablePointer<PyAsyncMethods>.allocate(capacity: 1)
         pythonAwaitableFunctionAsyncMethods.pointee = PyAsyncMethods(
-            am_await: nil,
+            am_await: PythonAwaitableFunction.next,
             am_aiter: nil,
-            am_anext: nil
-        )
+            am_anext: nil,
+            am_send: nil)
 
-        let pythonAwaitableFunctionTypeObject = UnsafeMutablePointer<PyTypeObject>.allocate(capacity: 1)
-        pythonAwaitableFunctionTypeObject.pointee = PyTypeObject(
+        let next: StaticString = "next"
+        let pythonAwaitableFunctionMethods = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: 2)
+        pythonAwaitableFunctionMethods[0] = PyMethodDef(
+            ml_name: UnsafeRawPointer(next.utf8Start).assumingMemoryBound(to: Int8.self),
+            ml_meth: unsafeBitCast(PythonAwaitableFunction.next, to: OpaquePointer.self),
+            ml_flags: 0,
+            ml_doc: nil)
+        pythonAwaitableFunctionMethods[1] = PyMethodDef(
+            ml_name: nil, ml_meth: nil, ml_flags: 0, ml_doc: nil)
+
+        let pythonAwaitableFunctionType = UnsafeMutablePointer<PyTypeObject>.allocate(capacity: 1)
+        pythonAwaitableFunctionType.initialize(to: PyTypeObject(
             ob_base: PyVarObject(
                 ob_base: PyObject(
-                    ob_refcnt: PyImmortalRefCount,
+                    ob_refcnt: Py_ImmortalRefCount,
                     ob_type: nil
                 ),
                 ob_size: 0
@@ -1969,7 +1993,7 @@ public struct PythonAwaitableFunction {
             tp_name: UnsafeRawPointer(pythonAwaitableFunctionName.utf8Start).assumingMemoryBound(to: Int8.self),
             tp_basicsize: MemoryLayout<PyAwaitableFunction>.size,
             tp_itemsize: 0,
-            tp_dealloc: nil,
+            tp_dealloc: PythonAwaitableFunction.dealloc,
             tp_vectorcall_offset: 0,
             tp_getattr: nil,
             tp_setattr: nil,
@@ -1984,7 +2008,7 @@ public struct PythonAwaitableFunction {
             tp_getattro: nil,
             tp_setattro: nil,
             tp_as_buffer: nil,
-            tp_flags: PyTPFlagsDefault,
+            tp_flags: Py_TPFlagsDefault | Py_TPFLAGS_HEAPTYPE,
             tp_doc: UnsafeRawPointer(pythonAwaitableFunctionDoc.utf8Start).assumingMemoryBound(to: Int8.self),
             tp_traverse: nil,
             tp_clear: nil,
@@ -1992,7 +2016,7 @@ public struct PythonAwaitableFunction {
             tp_weaklistoffset: 0,
             tp_iter: nil,
             tp_iternext: nil,
-            tp_methods: nil,
+            tp_methods: pythonAwaitableFunctionMethods,
             tp_members: nil,
             tp_getset: nil,
             tp_base: nil,
@@ -2001,9 +2025,9 @@ public struct PythonAwaitableFunction {
             tp_descr_set: nil,
             tp_dictoffset: 0,
             tp_init: nil,
-            tp_alloc: nil,
-            tp_new: nil,
-            tp_free: nil,
+            tp_alloc: PyType_GenericAlloc,
+            tp_new: PythonAwaitableFunction.new,
+            tp_free: PyObject_Free,
             tp_is_gc: nil,
             tp_bases: nil,
             tp_mro: nil,
@@ -2013,24 +2037,74 @@ public struct PythonAwaitableFunction {
             tp_del: nil,
             tp_version_tag: 0,
             tp_finalize: nil,
-            tp_vectorcall: nil,
-            tp_watched: 0,
-            tp_versions_used: 0)
+            tp_vectorcall: nil))
 
-        return pythonAwaitableFunctionTypeObject
+        return pythonAwaitableFunctionType
     }()
 
-    static func ensurePythonAwaitableType(in module: PythonModule) {
-        guard !registered else {
+    static func readyType(in module: PythonModule) {
+        guard !ready else {
             return
         }
-        guard module.addType(PythonAwaitableFunction.sharedTypeObject) else {
+        guard module.addType(PythonAwaitableFunction.sharedType) else {
             return
         }
-        guard module.addObject(PythonAwaitableFunction.sharedTypeObject, named: "Awaitable") else {
+        Py_IncRef(PythonAwaitableFunction.sharedType)
+        guard module.addObject(PythonAwaitableFunction.sharedType, named: "Awaitable") else {
             return
         }
-        registered = true
+        ready = true
+    }
+
+    static func alloc() -> PyObjectPointer {
+        precondition(PythonAwaitableFunction.ready, "AwaitableFunction type not ready.")
+        precondition(PythonAwaitableFunction.sharedType.pointee.tp_alloc != nil, "AwaitableFunction tp_alloc missing.")
+
+        let type = PythonAwaitableFunction.sharedType
+        guard let tp_alloc = type.pointee.tp_alloc else {
+            fatalError("Failed to allocate AwaitableFunction")
+        }
+
+        let result = tp_alloc(type, 0)
+        guard let result else {
+            fatalError("Failed to allocate AwaitableFunction")
+        }
+
+        return result
+    }
+
+    static func free(_ object: PyObjectPointer) -> Void {
+        precondition(PythonAwaitableFunction.ready, "AwaitableFunction type not ready.")
+        precondition(PythonAwaitableFunction.sharedType.pointee.tp_free != nil, "AwaitableFunction tp_free missing.")
+
+        let type = PythonAwaitableFunction.sharedType
+        guard let tp_free = type.pointee.tp_free else {
+            fatalError("Failed to deallocate AwaitableFunction")
+        }
+
+        tp_free(object)
+    }
+
+    static let new: newfunc = { type, args, kwds in
+        precondition(PythonAwaitableFunction.ready, "AwaitableFunction type not ready.")
+
+        let result = alloc()
+
+        let awaitable = result.withMemoryRebound(to: PyAwaitableFunction.self, capacity: 1) {
+            $0.pointee.aw_magic = 0x08675309
+            return $0.pointee
+        }
+        print("awaitable: \(awaitable)")
+
+        return result
+    }
+
+    static let dealloc: destructor = { object in
+        free(object)
+    }
+
+    static let next: unaryfunc = { object in
+        return nil
     }
 }
 
@@ -2039,11 +2113,11 @@ extension PythonObject: Error {}
 // From Python's C Headers:
 struct PyMethodDef {
     /// The name of the built-in function/method
-    var ml_name: UnsafePointer<Int8>
+    var ml_name: UnsafePointer<Int8>?
 
     /// The C function that implements it.
     /// Since this accepts multiple function signatures, the Swift type must be opaque here.
-    var ml_meth: OpaquePointer
+    var ml_meth: OpaquePointer?
 
     /// Combination of METH_xxx flags, which mostly describe the args expected by the C func
     var ml_flags: Int32

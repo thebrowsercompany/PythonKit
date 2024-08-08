@@ -51,6 +51,17 @@ let PyImport_ImportModule: @convention(c) (
     PyCCharPointer) -> PyObjectPointer? =
     PythonLibrary.loadSymbol(name: "PyImport_ImportModule")
 
+let PyImport_GetModuleDict: @convention(c) () -> PyObjectPointer =
+    PythonLibrary.loadSymbol(name: "PyImport_GetModuleDict")
+
+let _PyImport_FixupExtensionObject: @convention(c) (
+    PyObjectPointer, PyObjectPointer, PyObjectPointer, PyObjectPointer) -> Int =
+    PythonLibrary.loadSymbol(name: "_PyImport_FixupExtensionObject")
+
+let PyUnicode_InternFromString: @convention(c) (
+    PyCCharPointer) -> PyObjectPointer =
+    PythonLibrary.loadSymbol(name: "PyUnicode_InternFromString")
+
 // The 2nd argument is the api version.
 let PyModule_Create: @convention(c) (
     PyModuleDefPointer, Int) -> PyObjectPointer =
@@ -62,6 +73,13 @@ let PyModule_AddObject: @convention(c) (
 
 let PyType_Ready: @convention(c) (PyTypeObjectPointer) -> Int =
     PythonLibrary.loadSymbol(name: "PyType_Ready")
+
+let PyType_GenericAlloc: @convention(c) (
+    PyTypeObjectPointer, Int) -> PyObjectPointer? =
+    PythonLibrary.loadSymbol(name: "PyType_GenericAlloc")
+
+let PyObject_Free: @convention(c) (UnsafeMutableRawPointer) -> Void =
+    PythonLibrary.loadSymbol(name: "PyObject_Free")
 
 let PyEval_GetBuiltins: @convention(c) () -> PyObjectPointer =
     PythonLibrary.loadSymbol(name: "PyEval_GetBuiltins")

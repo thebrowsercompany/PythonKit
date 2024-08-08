@@ -6,6 +6,16 @@ class PythonModuleTests: XCTestCase {
         let module = PythonModule()
         XCTAssertNotNil(module.pythonObject)
 
-        PythonAwaitableFunction.ensurePythonAwaitableType(in: module)
+        let pythonKit = Python.import("pythonkit")
+        XCTAssertNotNil(pythonKit)
+    }
+
+    func testAwaitablePythonFunction() throws {
+        let _ = PythonAwaitableFunction()
+        XCTAssertTrue(PythonAwaitableFunction.ready)
+
+        let pythonKit = Python.import("pythonkit")
+        let awaitable = pythonKit.Awaitable()
+        XCTAssertNotNil(awaitable)
     }
 }
