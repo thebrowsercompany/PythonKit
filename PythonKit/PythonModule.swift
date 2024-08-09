@@ -12,6 +12,7 @@ typealias PyTypeObjectPointer = UnsafeMutableRawPointer
 typealias allocfunc = @convention(c) (PyTypeObjectPointer, Int) -> PyObjectPointer?
 typealias destructor = @convention(c) (PyObjectPointer) -> Void
 typealias freefunc = @convention(c) (UnsafeMutableRawPointer) -> Void
+typealias iternextfunc = @convention(c) (PyObjectPointer) -> PyObjectPointer?
 typealias newfunc = @convention(c) (PyTypeObjectPointer, PyObjectPointer, PyObjectPointer) -> PyObjectPointer?
 typealias sendfunc = @convention(c) (PyObjectPointer, PyObjectPointer, PyObjectPointer) -> Int
 typealias unaryfunc = @convention(c) (PyObjectPointer) -> PyObjectPointer?
@@ -114,7 +115,7 @@ struct PyTypeObject {
     var tp_richcompare: OpaquePointer?
     var tp_weaklistoffset: Int
     var tp_iter: OpaquePointer?
-    var tp_iternext: OpaquePointer?
+    var tp_iternext: iternextfunc?
     var tp_methods: UnsafePointer<PyMethodDef>?
     var tp_members: UnsafePointer<UnsafePointer<Int8>>?
     var tp_getset: UnsafePointer<PyGetSetDef>?
@@ -196,12 +197,12 @@ struct PythonModule : PythonConvertible {
 
     let PythonKitAwaitableType: UnsafeMutablePointer<PyTypeObject> = {
         // For __name__ and __doc__.
-        let pythonAwaitableFunctionName: StaticString = "Awaitable"
-        let pythonAwaitableFunctionDoc: StaticString = "PythonKit Awaitable Function"
+        let pythonKitAwaitableName: StaticString = "Awaitable"
+        let pythonKitAwaitableDoc: StaticString = "PythonKit Awaitable Function"
 
         // The async methods.
-        let pythonAwaitableFunctionAsyncMethods = UnsafeMutablePointer<PyAsyncMethods>.allocate(capacity: 1)
-        pythonAwaitableFunctionAsyncMethods.initialize(to: PyAsyncMethods(
+        let pythonKitAwaitableAsyncMethods = UnsafeMutablePointer<PyAsyncMethods>.allocate(capacity: 1)
+        pythonKitAwaitableAsyncMethods.initialize(to: PyAsyncMethods(
             am_await: PythonKitAwaitable.next,
             am_aiter: nil,
             am_anext: nil,
@@ -210,18 +211,18 @@ struct PythonModule : PythonConvertible {
         // The methods.
         let magicName: StaticString = "magic"
         let METH_NOARGS: Int32 = 0x0004
-        let pythonAwaitableFunctionMethods = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: 2)
-        pythonAwaitableFunctionMethods[0] = PyMethodDef(
+        let pythonKitAwaitableMethods = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: 2)
+        pythonKitAwaitableMethods[0] = PyMethodDef(
             ml_name: UnsafeRawPointer(magicName.utf8Start).assumingMemoryBound(to: Int8.self),
             ml_meth: unsafeBitCast(PythonKitAwaitable.magic, to: OpaquePointer.self),
             ml_flags: METH_NOARGS,
             ml_doc: nil)
-        pythonAwaitableFunctionMethods[1] = PyMethodDef(
+        pythonKitAwaitableMethods[1] = PyMethodDef(
             ml_name: nil, ml_meth: nil, ml_flags: 0, ml_doc: nil) // Sentinel.
 
         // The type.
-        let pythonAwaitableFunctionType = UnsafeMutablePointer<PyTypeObject>.allocate(capacity: 1)
-        pythonAwaitableFunctionType.initialize(to: PyTypeObject(
+        let pythonKitAwaitableType = UnsafeMutablePointer<PyTypeObject>.allocate(capacity: 1)
+        pythonKitAwaitableType.initialize(to: PyTypeObject(
             ob_base: PyVarObject(
                 ob_base: PyObject(
                     ob_refcnt: Py_ImmortalRefCount,
@@ -229,14 +230,14 @@ struct PythonModule : PythonConvertible {
                 ),
                 ob_size: 0
             ),
-            tp_name: UnsafeRawPointer(pythonAwaitableFunctionName.utf8Start).assumingMemoryBound(to: Int8.self),
+            tp_name: UnsafeRawPointer(pythonKitAwaitableName.utf8Start).assumingMemoryBound(to: Int8.self),
             tp_basicsize: MemoryLayout<PythonKitAwaitable>.size,
             tp_itemsize: 0,
             tp_dealloc: PythonKitAwaitable.dealloc,
             tp_vectorcall_offset: 0,
             tp_getattr: nil,
             tp_setattr: nil,
-            tp_as_async: pythonAwaitableFunctionAsyncMethods,
+            tp_as_async: pythonKitAwaitableAsyncMethods,
             tp_repr: nil,
             tp_as_number: nil,
             tp_as_sequence: nil,
@@ -248,14 +249,14 @@ struct PythonModule : PythonConvertible {
             tp_setattro: nil,
             tp_as_buffer: nil,
             tp_flags: Py_TPFlagsDefault | Py_TPFLAGS_HEAPTYPE,
-            tp_doc: UnsafeRawPointer(pythonAwaitableFunctionDoc.utf8Start).assumingMemoryBound(to: Int8.self),
+            tp_doc: UnsafeRawPointer(pythonKitAwaitableDoc.utf8Start).assumingMemoryBound(to: Int8.self),
             tp_traverse: nil,
             tp_clear: nil,
             tp_richcompare: nil,
             tp_weaklistoffset: 0,
             tp_iter: nil,
-            tp_iternext: nil,
-            tp_methods: pythonAwaitableFunctionMethods,
+            tp_iternext: PythonKitAwaitable.next,
+            tp_methods: pythonKitAwaitableMethods,
             tp_members: nil,
             tp_getset: nil,
             tp_base: nil,
@@ -278,6 +279,6 @@ struct PythonModule : PythonConvertible {
             tp_finalize: nil,
             tp_vectorcall: nil))
 
-        return pythonAwaitableFunctionType
+        return pythonKitAwaitableType
     }()
 }

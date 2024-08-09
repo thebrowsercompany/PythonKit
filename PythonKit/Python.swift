@@ -1917,7 +1917,7 @@ fileprivate extension PythonFunction {
 }
 
 //===----------------------------------------------------------------------===//
-// PythonAwaitableFunction - create async functions in Swift that can be
+// PythonKitAwaitable - create async functions in Swift that can be
 // awaited from Python.
 //===----------------------------------------------------------------------===//
 
@@ -1975,12 +1975,12 @@ extension PythonKitAwaitable {
     static func alloc() -> PyObjectPointer {
         let type = Python.module.PythonKitAwaitableType
         guard let tp_alloc = type.pointee.tp_alloc else {
-            fatalError("Failed to allocate AwaitableFunction")
+            fatalError("Failed to allocate PythonKitAwaitable")
         }
 
         let result = tp_alloc(type, 0)
         guard let result else {
-            fatalError("Failed to allocate AwaitableFunction")
+            fatalError("Failed to allocate PythonKitAwaitable")
         }
 
         return result
@@ -1993,21 +1993,24 @@ extension PythonKitAwaitable {
     static func free(_ object: PyObjectPointer) -> Void {
         let type = Python.module.PythonKitAwaitableType
         guard let tp_free = type.pointee.tp_free else {
-            fatalError("Failed to deallocate AwaitableFunction")
+            fatalError("Failed to deallocate PythonKitAwaitable")
         }
 
         tp_free(object)
     }
+}
 
+extension PythonKitAwaitable {
     static let next: unaryfunc = { object in
         return nil
     }
+}
 
+extension PythonKitAwaitable {
     static let magic: PyCFunction = { object, _ in
         guard let awaitable = PythonKitAwaitable(PythonObject(object)) else {
             return nil
         }
-        print("AwaitableFunction.magic called with \(awaitable)")
         return PyInt_FromLong(awaitable.aw_magic)
     }
 }
