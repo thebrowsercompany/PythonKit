@@ -1944,30 +1944,27 @@ extension PythonModule {
     }
 }
 
-struct PyAwaitableFunction {
+struct PythonKitAwaitable {
     var ob_base: PyObject
     var aw_magic: Int
 }
 
-extension PyAwaitableFunction: ConvertibleFromPython {
+extension PythonKitAwaitable: ConvertibleFromPython {
     init?(_ pythonObject: PythonObject) {
         let pyObject = pythonObject.ownedPyObject
         defer { Py_DecRef(pyObject) }
 
-        self = pyObject.withMemoryRebound(to: PyAwaitableFunction.self, capacity: 1) {
+        self = pyObject.withMemoryRebound(to: PythonKitAwaitable.self, capacity: 1) {
             $0.pointee
         }
     }
 }
 
-struct PythonAwaitableFunction {
-    init() {
-    }
-
+extension PythonKitAwaitable {
     static let new: newfunc = { type, args, kwds in
         let result = alloc()
 
-        let awaitable = result.withMemoryRebound(to: PyAwaitableFunction.self, capacity: 1) {
+        let awaitable = result.withMemoryRebound(to: PythonKitAwaitable.self, capacity: 1) {
             $0.pointee.aw_magic = 0x08675309
             return $0.pointee
         }
@@ -1976,7 +1973,7 @@ struct PythonAwaitableFunction {
     }
 
     static func alloc() -> PyObjectPointer {
-        let type = Python.module.pyAwaitableFunctionType
+        let type = Python.module.PythonKitAwaitableType
         guard let tp_alloc = type.pointee.tp_alloc else {
             fatalError("Failed to allocate AwaitableFunction")
         }
@@ -1994,7 +1991,7 @@ struct PythonAwaitableFunction {
     }
 
     static func free(_ object: PyObjectPointer) -> Void {
-        let type = Python.module.pyAwaitableFunctionType
+        let type = Python.module.PythonKitAwaitableType
         guard let tp_free = type.pointee.tp_free else {
             fatalError("Failed to deallocate AwaitableFunction")
         }
@@ -2004,6 +2001,14 @@ struct PythonAwaitableFunction {
 
     static let next: unaryfunc = { object in
         return nil
+    }
+
+    static let magic: PyCFunction = { object, _ in
+        guard let awaitable = PythonKitAwaitable(PythonObject(object)) else {
+            return nil
+        }
+        print("AwaitableFunction.magic called with \(awaitable)")
+        return PyInt_FromLong(awaitable.aw_magic)
     }
 }
 

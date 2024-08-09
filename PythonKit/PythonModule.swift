@@ -16,6 +16,8 @@ typealias newfunc = @convention(c) (PyTypeObjectPointer, PyObjectPointer, PyObje
 typealias sendfunc = @convention(c) (PyObjectPointer, PyObjectPointer, PyObjectPointer) -> Int
 typealias unaryfunc = @convention(c) (PyObjectPointer) -> PyObjectPointer?
 
+typealias PyCFunction = @convention(c) (PyObjectPointer, PyObjectPointer) -> PyObjectPointer?
+
 // This will be 3 for the lifetime of Python 3. See PEP-384.
 let Py_AbiVersion: Int = 3
 
@@ -182,17 +184,17 @@ struct PythonModule : PythonConvertible {
         pythonObject = PythonObject(consuming: module)
 
         // Ready the type.
-        guard addType(pyAwaitableFunctionType) else {
+        guard addType(PythonKitAwaitableType) else {
             fatalError("Failed to add Awaitable type.")
         }
 
         // Add the Awaitable object of the type.
-        guard addObject(pyAwaitableFunctionType, named: "Awaitable") else {
+        guard addObject(PythonKitAwaitableType, named: "Awaitable") else {
             fatalError("Failed to add Awaitable object.")
         }
     }
 
-    let pyAwaitableFunctionType: UnsafeMutablePointer<PyTypeObject> = {
+    let PythonKitAwaitableType: UnsafeMutablePointer<PyTypeObject> = {
         // For __name__ and __doc__.
         let pythonAwaitableFunctionName: StaticString = "Awaitable"
         let pythonAwaitableFunctionDoc: StaticString = "PythonKit Awaitable Function"
@@ -200,18 +202,19 @@ struct PythonModule : PythonConvertible {
         // The async methods.
         let pythonAwaitableFunctionAsyncMethods = UnsafeMutablePointer<PyAsyncMethods>.allocate(capacity: 1)
         pythonAwaitableFunctionAsyncMethods.initialize(to: PyAsyncMethods(
-            am_await: PythonAwaitableFunction.next,
+            am_await: PythonKitAwaitable.next,
             am_aiter: nil,
             am_anext: nil,
             am_send: nil))
 
         // The methods.
-        let next: StaticString = "next"
+        let magicName: StaticString = "magic"
+        let METH_NOARGS: Int32 = 0x0004
         let pythonAwaitableFunctionMethods = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: 2)
         pythonAwaitableFunctionMethods[0] = PyMethodDef(
-            ml_name: UnsafeRawPointer(next.utf8Start).assumingMemoryBound(to: Int8.self),
-            ml_meth: unsafeBitCast(PythonAwaitableFunction.next, to: OpaquePointer.self),
-            ml_flags: 0,
+            ml_name: UnsafeRawPointer(magicName.utf8Start).assumingMemoryBound(to: Int8.self),
+            ml_meth: unsafeBitCast(PythonKitAwaitable.magic, to: OpaquePointer.self),
+            ml_flags: METH_NOARGS,
             ml_doc: nil)
         pythonAwaitableFunctionMethods[1] = PyMethodDef(
             ml_name: nil, ml_meth: nil, ml_flags: 0, ml_doc: nil) // Sentinel.
@@ -227,9 +230,9 @@ struct PythonModule : PythonConvertible {
                 ob_size: 0
             ),
             tp_name: UnsafeRawPointer(pythonAwaitableFunctionName.utf8Start).assumingMemoryBound(to: Int8.self),
-            tp_basicsize: MemoryLayout<PyAwaitableFunction>.size,
+            tp_basicsize: MemoryLayout<PythonKitAwaitable>.size,
             tp_itemsize: 0,
-            tp_dealloc: PythonAwaitableFunction.dealloc,
+            tp_dealloc: PythonKitAwaitable.dealloc,
             tp_vectorcall_offset: 0,
             tp_getattr: nil,
             tp_setattr: nil,
@@ -262,7 +265,7 @@ struct PythonModule : PythonConvertible {
             tp_dictoffset: 0,
             tp_init: nil,
             tp_alloc: PyType_GenericAlloc,
-            tp_new: PythonAwaitableFunction.new,
+            tp_new: PythonKitAwaitable.new,
             tp_free: PyObject_Free,
             tp_is_gc: nil,
             tp_bases: nil,

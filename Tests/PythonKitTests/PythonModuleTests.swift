@@ -8,11 +8,15 @@ class PythonModuleTests: XCTestCase {
     }
 
     func testAwaitablePythonFunction() throws {
-        let pythonKit = Python.import("pythonkit")
-        let awaitable = pythonKit.Awaitable()
-        XCTAssertNotNil(awaitable)
+        let pythonkit = Python.import("pythonkit")
 
-        let pyAwaitableFunction = PyAwaitableFunction(awaitable)!
-        XCTAssert(pyAwaitableFunction.aw_magic == 0x08675309)
+        // Verify we can call Swift methods from Python.
+        let awaitable = pythonkit.Awaitable()
+        XCTAssertEqual(awaitable.magic(), 0x08675309)
+
+        // Verify we can conver to the native Swift type.
+        let pkAwaitable = PythonKitAwaitable(awaitable)!
+        XCTAssertNotNil(pkAwaitable)
+        XCTAssertEqual(pkAwaitable.aw_magic, 0x08675309)
     }
 }
