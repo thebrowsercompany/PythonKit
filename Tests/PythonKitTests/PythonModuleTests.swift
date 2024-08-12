@@ -16,5 +16,25 @@ class PythonModuleTests: XCTestCase {
         let pkAwaitable = PythonKitAwaitable(awaitable)!
         XCTAssertNotNil(pkAwaitable)
         XCTAssertEqual(pkAwaitable.aw_magic, 0x08675309)
+
+        // Verify methods we expect to be present are present.
+        let methods = Python.dir(awaitable)
+        XCTAssertFalse(methods.contains("_should_not_exist_")) // Sanity check.
+        XCTAssertTrue(methods.contains("magic"))
+        XCTAssertTrue(methods.contains("handle"))
+        XCTAssertTrue(methods.contains("set_handle"))
+        XCTAssertTrue(methods.contains("result"))
+        XCTAssertTrue(methods.contains("set_result"))
+    }
+
+    func testAwaitableMethods() throws {
+        let awaitable = Python.import("pythonkit").Awaitable()
+        let index = PythonObject(1)
+        awaitable.set_handle(index)
+        XCTAssertEqual(awaitable.handle(), 1)
+
+        let result = PythonObject("some result")
+        awaitable.set_result(result)
+        XCTAssertEqual(awaitable.result(), "some result")
     }
 }

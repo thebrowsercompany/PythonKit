@@ -13,7 +13,7 @@ typealias allocfunc = @convention(c) (PyTypeObjectPointer, Int) -> PyObjectPoint
 typealias destructor = @convention(c) (PyObjectPointer) -> Void
 typealias freefunc = @convention(c) (UnsafeMutableRawPointer) -> Void
 typealias iternextfunc = @convention(c) (PyObjectPointer) -> PyObjectPointer?
-typealias newfunc = @convention(c) (PyTypeObjectPointer, PyObjectPointer, PyObjectPointer) -> PyObjectPointer?
+typealias newfunc = @convention(c) (PyTypeObjectPointer, PyObjectPointer?, PyObjectPointer?) -> PyObjectPointer?
 typealias sendfunc = @convention(c) (PyObjectPointer, PyObjectPointer, PyObjectPointer) -> Int
 typealias unaryfunc = @convention(c) (PyObjectPointer) -> PyObjectPointer?
 
@@ -28,8 +28,11 @@ let Py_TPFlagsDefault: UInt64 = 0
 // Our type is dynamically allocated.
 let Py_TPFLAGS_HEAPTYPE: UInt64 = (1 << 9)
 
-// The immortal value is 0xFFFFFFFF.
-let Py_ImmortalRefCount: Int = Int(UInt32.max)
+// The immortal value is the 32bit UInt.max value.
+let Py_ImmortalRefCount: Int = Int(bitPattern: 0x00000000FFFFFFFF)
+
+let METH_NOARGS: Int32 = 0x0004
+let METH_O: Int32 = 0x0008
 
 struct PyObject {
     var ob_refcnt: Int
@@ -167,7 +170,10 @@ struct PythonModule : PythonConvertible {
         m_free: nil
     )
 
+    // PythonConvertible conformance.
     public var pythonObject: PythonObject
+
+    internal var awaitableManager: AwaitableManager = AwaitableManager()
 
     init() {
         let moduleDefinition: UnsafeMutablePointer<PyModuleDef> = .allocate(capacity: 1)
@@ -185,17 +191,17 @@ struct PythonModule : PythonConvertible {
         pythonObject = PythonObject(consuming: module)
 
         // Ready the type.
-        guard addType(PythonKitAwaitableType) else {
+        guard addType(pythonKitAwaitableType) else {
             fatalError("Failed to add Awaitable type.")
         }
 
         // Add the Awaitable object of the type.
-        guard addObject(PythonKitAwaitableType, named: "Awaitable") else {
+        guard addObject(pythonKitAwaitableType, named: "Awaitable") else {
             fatalError("Failed to add Awaitable object.")
         }
     }
 
-    let PythonKitAwaitableType: UnsafeMutablePointer<PyTypeObject> = {
+    let pythonKitAwaitableType: UnsafeMutablePointer<PyTypeObject> = {
         // For __name__ and __doc__.
         let pythonKitAwaitableName: StaticString = "Awaitable"
         let pythonKitAwaitableDoc: StaticString = "PythonKit Awaitable Function"
@@ -209,18 +215,29 @@ struct PythonModule : PythonConvertible {
             am_send: nil))
 
         // The methods.
-        let magicName: StaticString = "magic"
-        let METH_NOARGS: Int32 = 0x0004
-        let pythonKitAwaitableMethods = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: 2)
-        pythonKitAwaitableMethods[0] = PyMethodDef(
-            ml_name: UnsafeRawPointer(magicName.utf8Start).assumingMemoryBound(to: Int8.self),
-            ml_meth: unsafeBitCast(PythonKitAwaitable.magic, to: OpaquePointer.self),
-            ml_flags: METH_NOARGS,
-            ml_doc: nil)
-        pythonKitAwaitableMethods[1] = PyMethodDef(
-            ml_name: nil, ml_meth: nil, ml_flags: 0, ml_doc: nil) // Sentinel.
+        let methods: [(StaticString, PyCFunction, Int32)] = [
+            ("magic", PythonKitAwaitable.magic, METH_NOARGS),
+            ("handle", PythonKitAwaitable.handle, METH_NOARGS),
+            ("set_handle", PythonKitAwaitable.setHandle, METH_O),
+            ("result", PythonKitAwaitable.result, METH_NOARGS),
+            ("set_result", PythonKitAwaitable.setResult, METH_O),
+        ]
 
-        // The type.
+        // Build the [PyMethodDef] structure.
+        let pythonKitAwaitableMethods = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: methods.count + 1)
+        for (index, (name, fn, meth)) in methods.enumerated() {
+            pythonKitAwaitableMethods[index] = PyMethodDef(
+                ml_name: UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self),
+                ml_meth: unsafeBitCast(fn, to: OpaquePointer.self),
+                ml_flags: meth,
+                ml_doc: nil)
+        }
+        // Sentinel value.
+        pythonKitAwaitableMethods[methods.count] = PyMethodDef(
+            ml_name: nil, ml_meth: nil, ml_flags: 0, ml_doc: nil)
+
+        // The type. This layout currently matches Python 3.11.
+        // TODO: We should have conditionals to support other versions.
         let pythonKitAwaitableType = UnsafeMutablePointer<PyTypeObject>.allocate(capacity: 1)
         pythonKitAwaitableType.initialize(to: PyTypeObject(
             ob_base: PyVarObject(

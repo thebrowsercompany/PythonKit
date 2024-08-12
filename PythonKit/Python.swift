@@ -1684,6 +1684,20 @@ public struct PythonFunction {
         self.name = name
     }
 
+    @available(macOS 10.15, *)
+    @_disfavoredOverload
+    public init(name: StaticString?, awaitable fn: @escaping (PythonObject) async throws -> PythonConvertible) {
+        function = PyFunction { argumentsAsTuple in
+            let awaitable = Python.import("pythonkit").Awaitable()
+            Task {
+                let result = try await fn(argumentsAsTuple[0])
+                awaitable.set_result(result)
+            }
+            return awaitable
+        }
+        self.name = name
+    }
+
     /// For cases where the Swift function should accept more (or less) than one parameter, accept an ordered array of all arguments instead.
     public init(_ fn: @escaping ([PythonObject]) throws -> PythonConvertible) {
         function = PyFunction { argumentsAsTuple in
@@ -1693,6 +1707,19 @@ public struct PythonFunction {
 
     public init(name: StaticString?, _ fn: @escaping ([PythonObject]) throws -> PythonConvertible) {
         self.init(fn)
+        self.name = name
+    }
+
+    @available(macOS 10.15, *)
+    public init(name: StaticString?, awaitable fn: @escaping ([PythonObject]) async throws -> PythonConvertible) {
+        function = PyFunction { argumentsAsTuple in
+            let awaitable = Python.import("pythonkit").Awaitable()
+            Task {
+                let result = try await fn(argumentsAsTuple.map { $0 })
+                awaitable.set_result(result)
+            }
+            return awaitable
+        }
         self.name = name
     }
 
@@ -1713,6 +1740,24 @@ public struct PythonFunction {
 
     public init(name: StaticString?, _ fn: @escaping ([PythonObject], [(key: String, value: PythonObject)]) throws -> PythonConvertible) {
         self.init(fn)
+        self.name = name
+    }
+
+    @available(macOS 10.15, *)
+    public init(name: StaticString?, awaitable fn: @escaping ([PythonObject], [(key: String, value: PythonObject)]) async throws -> PythonConvertible) {
+        function = PyFunction { argumentsAsTuple, keywordArgumentsAsDictionary in
+            let awaitable = Python.import("pythonkit").Awaitable()
+            Task {
+                var kwargs: [(String, PythonObject)] = []
+                for keyAndValue in keywordArgumentsAsDictionary.items() {
+                    let (key, value) = keyAndValue.tuple2
+                    kwargs.append((String(key)!, value))
+                }
+                let result = try await fn(argumentsAsTuple.map { $0 }, kwargs)
+                awaitable.set_result(result)
+            }
+            return awaitable
+        }
         self.name = name
     }
 }
@@ -1947,6 +1992,24 @@ extension PythonModule {
 struct PythonKitAwaitable {
     var ob_base: PyObject
     var aw_magic: Int
+    var aw_handle: Int
+    var aw_result: PythonObject?
+}
+
+actor AwaitableManager {
+    private var awaitables: [PythonObject] = []
+    private var nextIndex = 0
+
+    func add(_ awaitable: PythonObject) {
+        nextIndex += 1
+
+        guard nextIndex < Int.max else {
+            fatalError("Too many awaitables!")
+        }
+
+        awaitable.set_index(nextIndex)
+        awaitables.append(awaitable)
+    }
 }
 
 extension PythonKitAwaitable: ConvertibleFromPython {
@@ -1960,12 +2023,16 @@ extension PythonKitAwaitable: ConvertibleFromPython {
     }
 }
 
+// Definitions of various CPython functions related to PyType lifecycle.
+// The flow is alloc -> new -> [use object] -> dealloc -> free.
 extension PythonKitAwaitable {
     static let new: newfunc = { type, args, kwds in
         let result = alloc()
 
         let awaitable = result.withMemoryRebound(to: PythonKitAwaitable.self, capacity: 1) {
             $0.pointee.aw_magic = 0x08675309
+            $0.pointee.aw_handle = Int.max
+            $0.pointee.aw_result = nil
             return $0.pointee
         }
 
@@ -1973,7 +2040,7 @@ extension PythonKitAwaitable {
     }
 
     static func alloc() -> PyObjectPointer {
-        let type = Python.module.PythonKitAwaitableType
+        let type = Python.module.pythonKitAwaitableType
         guard let tp_alloc = type.pointee.tp_alloc else {
             fatalError("Failed to allocate PythonKitAwaitable")
         }
@@ -1991,7 +2058,7 @@ extension PythonKitAwaitable {
     }
 
     static func free(_ object: PyObjectPointer) -> Void {
-        let type = Python.module.PythonKitAwaitableType
+        let type = Python.module.pythonKitAwaitableType
         guard let tp_free = type.pointee.tp_free else {
             fatalError("Failed to deallocate PythonKitAwaitable")
         }
@@ -2000,18 +2067,55 @@ extension PythonKitAwaitable {
     }
 }
 
+// Definitions of pythonKitAwaitableAsyncMethods.
 extension PythonKitAwaitable {
     static let next: unaryfunc = { object in
         return nil
     }
 }
 
+// Definitions of pythonKitAwaitableMethods.
 extension PythonKitAwaitable {
     static let magic: PyCFunction = { object, _ in
         guard let awaitable = PythonKitAwaitable(PythonObject(object)) else {
             return nil
         }
         return PyInt_FromLong(awaitable.aw_magic)
+    }
+
+    static let handle: PyCFunction = { object, _ in
+        guard let awaitable = PythonKitAwaitable(PythonObject(object)) else {
+            return nil
+        }
+        return PyInt_FromLong(awaitable.aw_handle)
+    }
+
+    static let setHandle: PyCFunction = { object, arg in
+        object.withMemoryRebound(to: PythonKitAwaitable.self, capacity: 1) {
+            guard var handle = Int(PythonObject(consuming: arg)) else {
+                fatalError("Failed to set handle")
+            }
+            $0.pointee.aw_handle = Int(PythonObject(consuming: arg))!
+        }
+        return Python.None.borrowedPyObject
+    }
+
+    static let result: PyCFunction = { object, _ in
+        guard let awaitable = PythonKitAwaitable(PythonObject(object)) else {
+            return nil
+        }
+
+        guard let result = awaitable.aw_result else {
+            return Python.None.borrowedPyObject
+        }
+        return result.borrowedPyObject
+    }
+
+    static let setResult: PyCFunction = { object, arg in
+        object.withMemoryRebound(to: PythonKitAwaitable.self, capacity: 1) {
+            $0.pointee.aw_result = PythonObject(consuming: arg)
+        }
+        return Python.None.borrowedPyObject
     }
 }
 
