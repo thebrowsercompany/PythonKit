@@ -25,6 +25,9 @@ class PythonModuleTests: XCTestCase {
         XCTAssertTrue(methods.contains("set_handle"))
         XCTAssertTrue(methods.contains("result"))
         XCTAssertTrue(methods.contains("set_result"))
+
+        // Veryify __next__ is present.
+        XCTAssertNotNil(awaitable.__next__)
     }
 
     func testAwaitableMethods() throws {
