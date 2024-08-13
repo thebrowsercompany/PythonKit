@@ -2018,8 +2018,7 @@ fileprivate extension PythonFunction {
 }
 
 //===----------------------------------------------------------------------===//
-// PythonKitAwaitable - create async functions in Swift that can be
-// awaited from Python.
+// PythonModule functions that need access to PyRef members.
 //===----------------------------------------------------------------------===//
 
 extension PythonModule {
