@@ -159,7 +159,7 @@ struct PythonModule : PythonConvertible {
     init() {
         // Define module-level methods.
         let methods: [(StaticString, PyCFunction, Int32)] = [
-            ("test_awaitable", PythonModule.testAwaitable, METH_NOARGS),
+            ("get_test_awaitable", PythonModule.getTestAwaitable, METH_NOARGS),
         ]
         let methodDefs = Self.generateMethodDefs(from: methods)
 

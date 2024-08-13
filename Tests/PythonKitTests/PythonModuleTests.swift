@@ -23,7 +23,7 @@ class PythonModuleTests: XCTestCase {
             import pythonkit
 
             async def main():
-                awaitable = pythonkit.test_awaitable()
+                awaitable = pythonkit.get_test_awaitable()
                 result = await awaitable()
                 print(f"Python: result == {result}")
                 assert result == 42

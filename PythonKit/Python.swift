@@ -2045,7 +2045,7 @@ extension PythonModule {
     }
 
     static var testAwaitableFunction: PythonFunction?
-    static let testAwaitable: PyCFunction = { _, _ in
+    static let getTestAwaitable: PyCFunction = { _, _ in
         guard let testAwaitableFunction = Self.testAwaitableFunction else {
             fatalError("testAwaitableFunction not set")
         }
