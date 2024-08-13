@@ -34,6 +34,10 @@ let Py_NE: Int32 = 3
 let Py_GT: Int32 = 4
 let Py_GE: Int32 = 5
 
+typealias PyGILState_State = Int32
+let Py_GILState_Locked: Int32 = 0
+let Py_GILState_Unlocked: Int32 = 1
+
 //===----------------------------------------------------------------------===//
 // Python library symbols lazily loaded at runtime.
 //===----------------------------------------------------------------------===//
@@ -46,6 +50,12 @@ let Py_IncRef: @convention(c) (PyObjectPointer?) -> Void =
 
 let Py_DecRef: @convention(c) (PyObjectPointer?) -> Void =
     PythonLibrary.loadSymbol(name: "Py_DecRef")
+
+let PyGILState_Ensure: @convention(c) () -> PyGILState_State =
+    PythonLibrary.loadSymbol(name: "PyGILState_Ensure")
+
+let PyGILState_Release: @convention(c) (PyGILState_State) -> Void =
+    PythonLibrary.loadSymbol(name: "PyGILState_Release")
 
 let PyImport_ImportModule: @convention(c) (
     PyCCharPointer) -> PyObjectPointer? =

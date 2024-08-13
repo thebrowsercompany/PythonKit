@@ -150,34 +150,42 @@ struct PyTypeObject {
 struct PythonModule : PythonConvertible {
     private static let moduleName: StaticString = "pythonkit"
     private static let moduleDoc: StaticString = "PythonKit Extension Module"
-    private static let moduleDef = PyModuleDef(
-        m_base: PyModuleDef_Base(
-            ob_base: PyObject(
-                ob_refcnt: Py_ImmortalRefCount,
-                ob_type: nil
-            ),
-            m_init: nil,
-            m_index: 0,
-            m_copy: nil
-        ),
-        m_name: UnsafeRawPointer(moduleName.utf8Start).assumingMemoryBound(to: Int8.self),
-        m_doc: UnsafeRawPointer(moduleDoc.utf8Start).assumingMemoryBound(to: Int8.self),
-        m_size: -1,
-        m_methods: nil,
-        m_slots: nil,
-        m_traverse: nil,
-        m_clear: nil,
-        m_free: nil
-    )
 
     // PythonConvertible conformance.
     public var pythonObject: PythonObject
 
-    internal var awaitableManager: AwaitableManager = AwaitableManager()
+    private let moduleDef: PyModuleDef
 
     init() {
+        // Define module-level methods.
+        let methods: [(StaticString, PyCFunction, Int32)] = [
+            ("test_awaitable", PythonModule.testAwaitable, METH_NOARGS),
+        ]
+        let methodDefs = Self.generateMethodDefs(from: methods)
+
+        // Define the module.
+        moduleDef = PyModuleDef(
+            m_base: PyModuleDef_Base(
+                ob_base: PyObject(
+                    ob_refcnt: Py_ImmortalRefCount,
+                    ob_type: nil
+                ),
+                m_init: nil,
+                m_index: 0,
+                m_copy: nil
+            ),
+            m_name: UnsafeRawPointer(Self.moduleName.utf8Start).assumingMemoryBound(to: Int8.self),
+            m_doc: UnsafeRawPointer(Self.moduleDoc.utf8Start).assumingMemoryBound(to: Int8.self),
+            m_size: -1,
+            m_methods: methodDefs,
+            m_slots: nil,
+            m_traverse: nil,
+            m_clear: nil,
+            m_free: nil
+        )
+
         let moduleDefinition: UnsafeMutablePointer<PyModuleDef> = .allocate(capacity: 1)
-        moduleDefinition.pointee = Self.moduleDef
+        moduleDefinition.pointee = moduleDef
 
         let module = PyModule_Create(moduleDefinition, Py_AbiVersion)
         let moduleName = PyUnicode_InternFromString(
@@ -189,113 +197,20 @@ struct PythonModule : PythonConvertible {
         }
 
         pythonObject = PythonObject(consuming: module)
-
-        // Ready the type.
-        guard addType(pythonKitAwaitableType) else {
-            fatalError("Failed to add Awaitable type.")
-        }
-
-        // Add the Awaitable object of the type.
-        guard addObject(pythonKitAwaitableType, named: "Awaitable") else {
-            fatalError("Failed to add Awaitable object.")
-        }
     }
 
-    let pythonKitAwaitableType: UnsafeMutablePointer<PyTypeObject> = {
-        // For __name__ and __doc__.
-        let pythonKitAwaitableName: StaticString = "Awaitable"
-        let pythonKitAwaitableDoc: StaticString = "PythonKit Awaitable Function"
-
-        // The async methods.
-        let pythonKitAwaitableAsyncMethods = UnsafeMutablePointer<PyAsyncMethods>.allocate(capacity: 1)
-        pythonKitAwaitableAsyncMethods.initialize(to: PyAsyncMethods(
-            am_await: PythonKitAwaitable.next,
-            am_aiter: nil,
-            am_anext: nil,
-            am_send: nil))
-
-        // The methods.
-        let methods: [(StaticString, PyCFunction, Int32)] = [
-            ("magic", PythonKitAwaitable.magic, METH_NOARGS),
-            ("handle", PythonKitAwaitable.handle, METH_NOARGS),
-            ("set_handle", PythonKitAwaitable.setHandle, METH_O),
-            ("result", PythonKitAwaitable.result, METH_NOARGS),
-            ("set_result", PythonKitAwaitable.setResult, METH_O),
-        ]
-
-        // Build the [PyMethodDef] structure.
-        let pythonKitAwaitableMethods = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: methods.count + 1)
+    private static func generateMethodDefs(from methods: [(StaticString, PyCFunction, Int32)]) -> UnsafeMutablePointer<PyMethodDef> {
+        let methodDefs = UnsafeMutablePointer<PyMethodDef>.allocate(capacity: methods.count + 1)
         for (index, (name, fn, meth)) in methods.enumerated() {
-            pythonKitAwaitableMethods[index] = PyMethodDef(
+            methodDefs[index] = PyMethodDef(
                 ml_name: UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self),
                 ml_meth: unsafeBitCast(fn, to: OpaquePointer.self),
                 ml_flags: meth,
                 ml_doc: nil)
         }
         // Sentinel value.
-        pythonKitAwaitableMethods[methods.count] = PyMethodDef(
+        methodDefs[methods.count] = PyMethodDef(
             ml_name: nil, ml_meth: nil, ml_flags: 0, ml_doc: nil)
-
-        // The type. This layout currently matches Python 3.11.
-        // TODO: We should have conditionals to support other versions.
-        let pythonKitAwaitableType = UnsafeMutablePointer<PyTypeObject>.allocate(capacity: 1)
-        pythonKitAwaitableType.initialize(to: PyTypeObject(
-            ob_base: PyVarObject(
-                ob_base: PyObject(
-                    ob_refcnt: Py_ImmortalRefCount,
-                    ob_type: nil
-                ),
-                ob_size: 0
-            ),
-            tp_name: UnsafeRawPointer(pythonKitAwaitableName.utf8Start).assumingMemoryBound(to: Int8.self),
-            tp_basicsize: MemoryLayout<PythonKitAwaitable>.size,
-            tp_itemsize: 0,
-            tp_dealloc: PythonKitAwaitable.dealloc,
-            tp_vectorcall_offset: 0,
-            tp_getattr: nil,
-            tp_setattr: nil,
-            tp_as_async: pythonKitAwaitableAsyncMethods,
-            tp_repr: nil,
-            tp_as_number: nil,
-            tp_as_sequence: nil,
-            tp_as_mapping: nil,
-            tp_hash: nil,
-            tp_call: nil,
-            tp_str: nil,
-            tp_getattro: nil,
-            tp_setattro: nil,
-            tp_as_buffer: nil,
-            tp_flags: Py_TPFlagsDefault | Py_TPFLAGS_HEAPTYPE,
-            tp_doc: UnsafeRawPointer(pythonKitAwaitableDoc.utf8Start).assumingMemoryBound(to: Int8.self),
-            tp_traverse: nil,
-            tp_clear: nil,
-            tp_richcompare: nil,
-            tp_weaklistoffset: 0,
-            tp_iter: nil,
-            tp_iternext: PythonKitAwaitable.next,
-            tp_methods: pythonKitAwaitableMethods,
-            tp_members: nil,
-            tp_getset: nil,
-            tp_base: nil,
-            tp_dict: nil,
-            tp_descr_get: nil,
-            tp_descr_set: nil,
-            tp_dictoffset: 0,
-            tp_init: nil,
-            tp_alloc: PyType_GenericAlloc,
-            tp_new: PythonKitAwaitable.new,
-            tp_free: PyObject_Free,
-            tp_is_gc: nil,
-            tp_bases: nil,
-            tp_mro: nil,
-            tp_cache: nil,
-            tp_subclasses: nil,
-            tp_weaklist: nil,
-            tp_del: nil,
-            tp_version_tag: 0,
-            tp_finalize: nil,
-            tp_vectorcall: nil))
-
-        return pythonKitAwaitableType
-    }()
+        return methodDefs
+    }
 }

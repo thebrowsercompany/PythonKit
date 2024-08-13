@@ -7,37 +7,28 @@ class PythonModuleTests: XCTestCase {
         XCTAssertNotNil(pythonKit)
     }
 
-    func testAwaitable() throws {
-        // Verify we can call Swift methods from Python.
-        let awaitable = Python.import("pythonkit").Awaitable()
-        XCTAssertEqual(awaitable.magic(), 0x08675309)
+    func testCanAwait() throws {
+        _ = Python
 
-        // Verify we can convert to the native Swift type.
-        let pkAwaitable = PythonKitAwaitable(awaitable)!
-        XCTAssertNotNil(pkAwaitable)
-        XCTAssertEqual(pkAwaitable.aw_magic, 0x08675309)
+        PythonModule.testAwaitableFunction =
+            PythonFunction(name: "test_awaitable") { (_, _) async throws -> PythonConvertible in
+                let result = 42
+                return result
+            }
 
-        // Verify methods we expect to be present are present.
-        let methods = Python.dir(awaitable)
-        XCTAssertFalse(methods.contains("_should_not_exist_")) // Sanity check.
-        XCTAssertTrue(methods.contains("magic"))
-        XCTAssertTrue(methods.contains("handle"))
-        XCTAssertTrue(methods.contains("set_handle"))
-        XCTAssertTrue(methods.contains("result"))
-        XCTAssertTrue(methods.contains("set_result"))
+        // TODO: Find a way to assert the result in Swift.
+        PyRun_SimpleString("""
+            import asyncio
+            import inspect
+            import pythonkit
 
-        // Veryify __next__ is present.
-        XCTAssertNotNil(awaitable.__next__)
-    }
+            async def main():
+                awaitable = pythonkit.test_awaitable()
+                result = await awaitable()
+                print(f"Python: result == {result}")
+                assert result == 42
 
-    func testAwaitableMethods() throws {
-        let awaitable = Python.import("pythonkit").Awaitable()
-        let index = PythonObject(1)
-        awaitable.set_handle(index)
-        XCTAssertEqual(awaitable.handle(), 1)
-
-        let result = PythonObject("some result")
-        awaitable.set_result(result)
-        XCTAssertEqual(awaitable.result(), "some result")
+            asyncio.run(main())
+            """)
     }
 }
