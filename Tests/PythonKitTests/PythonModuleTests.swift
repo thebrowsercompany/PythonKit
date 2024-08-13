@@ -19,7 +19,6 @@ class PythonModuleTests: XCTestCase {
         // TODO: Find a way to assert the result in Swift.
         PyRun_SimpleString("""
             import asyncio
-            import inspect
             import pythonkit
 
             async def main():
