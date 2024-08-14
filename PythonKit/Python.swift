@@ -769,6 +769,13 @@ public class PythonThread {
         PyGILState_Release(state)
         Self.sharedState = nil
     }
+
+    /// Execute body while holding the GIL.
+    public static func withGIL<T>(_ body: () throws -> T) rethrows -> T {
+        enterGIL()
+        defer { leaveGIL() }
+        return try body()
+    }
 }
 
 //===----------------------------------------------------------------------===//
