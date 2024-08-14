@@ -740,6 +740,38 @@ public struct PythonInterface {
 }
 
 //===----------------------------------------------------------------------===//
+// Helper to enter and leave the GIL for non-Python created threads.
+// See https://docs.python.org/3/c-api/init.html#non-python-created-threads
+//===----------------------------------------------------------------------===//
+
+public class PythonThread {
+    /// Declare an instance to automatically enter/leave within the
+    /// current scope, RIAA-style. Or manually call class methods below.
+    init() {
+        Self.enterGIL()
+    }
+
+    deinit {
+        Self.leaveGIL()
+    }
+
+    private static var sharedState: PyGILState_State?
+
+    /// Enter the GIL and initialize Python thread state.
+    public static func enterGIL() {
+        guard Self.sharedState == nil else { return }
+        Self.sharedState = PyGILState_Ensure()
+    }
+
+    /// Exit the GIL.
+    public static func leaveGIL() {
+        guard let state = Self.sharedState else { return }
+        PyGILState_Release(state)
+        Self.sharedState = nil
+    }
+}
+
+//===----------------------------------------------------------------------===//
 // Helpers for Python tuple types
 //===----------------------------------------------------------------------===//
 
