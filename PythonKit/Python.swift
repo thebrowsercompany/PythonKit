@@ -19,6 +19,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Foundation
+
 //===----------------------------------------------------------------------===//
 // `PyReference` definition
 //===----------------------------------------------------------------------===//
@@ -745,23 +747,32 @@ public struct PythonInterface {
 //===----------------------------------------------------------------------===//
 
 class PythonThread {
-    private var state: PyGILState_State?
+    private static let stateKey = "pythonkit.PythonThreadStateKey"
+
+    private var threadState: PyGILState_State? {
+        get {
+            return Thread.current.threadDictionary[PythonThread.stateKey] as? PyGILState_State
+        }
+        set {
+            Thread.current.threadDictionary[PythonThread.stateKey] = newValue
+        }
+    }
 
     /// Enter the GIL and initialize Python thread state.
     func enterGIL() {
-        guard state == nil else {
+        guard threadState == nil else {
             fatalError("The GIL is already held by this thread.")
         }
-        state = PyGILState_Ensure()
+        threadState = PyGILState_Ensure()
     }
 
     /// Exit the GIL.
     func leaveGIL() {
-        guard let s = state else {
+        guard let state = threadState else {
             fatalError("The GIL is not held by this thread.")
         }
-        PyGILState_Release(s)
-        state = nil
+        PyGILState_Release(state)
+        threadState = nil
     }
 }
 
