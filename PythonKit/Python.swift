@@ -675,6 +675,9 @@ public struct PythonInterface {
     /// A dictionary of the Python builtins.
     public let builtins: PythonObject
 
+    /// Native extension module.
+    internal let module: PythonModule
+
     init() {
         Py_Initialize()   // Initialize Python
         builtins = PythonObject(PyEval_GetBuiltins())
@@ -694,6 +697,8 @@ public struct PythonInterface {
                 executable_name = "python{}.{}".format(sys.version_info.major, sys.version_info.minor)
                 sys.executable = os.path.join(sys.exec_prefix, "bin", executable_name)
             """)
+
+        module = PythonModule()
     }
 
     public func attemptImport(_ name: String) throws -> PythonObject {
@@ -732,6 +737,46 @@ public struct PythonInterface {
         try body(yieldValue)
         yieldValue.__exit__()
     }
+}
+
+//===----------------------------------------------------------------------===//
+// Helper to enter and leave the GIL for non-Python created threads.
+// See https://docs.python.org/3/c-api/init.html#non-python-created-threads
+//===----------------------------------------------------------------------===//
+
+class PythonThread {
+    private static var sharedState: PyGILState_State?
+
+    /// Enter the GIL and initialize Python thread state.
+    static func enterGIL() {
+        guard Self.sharedState == nil else {
+            fatalError("The GIL is already held by this thread.")
+        }
+        Self.sharedState = PyGILState_Ensure()
+    }
+
+    /// Exit the GIL.
+    static func leaveGIL() {
+        guard let state = Self.sharedState else {
+            fatalError("The GIL is not held by this thread.")
+        }
+        PyGILState_Release(state)
+        Self.sharedState = nil
+    }
+}
+
+/// Execute body while holding the GIL.
+public func withGIL<T>(_ body: () throws -> T) rethrows -> T {
+    PythonThread.enterGIL()
+    defer { PythonThread.leaveGIL() }
+    return try body()
+}
+
+/// Leave the GIL, execute the body, then re-enter the GIL.
+public func withoutGIL<T>(_ body: () throws -> T) rethrows -> T {
+    PythonThread.leaveGIL()
+    defer { PythonThread.enterGIL() }
+    return try body()
 }
 
 //===----------------------------------------------------------------------===//
@@ -1679,6 +1724,27 @@ public struct PythonFunction {
         self.name = name
     }
 
+    @_disfavoredOverload
+    public init(name: StaticString?, awaitable fn: @escaping (PythonObject) async throws -> PythonConvertible) {
+        function = PyFunction { argumentsAsTuple in
+            let swiftArg = argumentsAsTuple[0]
+            let loop = Python.import("asyncio").get_running_loop()
+            let future = loop.create_future()
+            Task {
+                var err: Error?
+                var result: PythonConvertible?
+                do {
+                    result = try await fn(swiftArg)
+                } catch {
+                    err = error
+                }
+                Self.completeFuture(loop, future, result, err)
+            }
+            return future
+        }
+        self.name = name
+    }
+
     /// For cases where the Swift function should accept more (or less) than one parameter, accept an ordered array of all arguments instead.
     public init(_ fn: @escaping ([PythonObject]) throws -> PythonConvertible) {
         function = PyFunction { argumentsAsTuple in
@@ -1688,6 +1754,26 @@ public struct PythonFunction {
 
     public init(name: StaticString?, _ fn: @escaping ([PythonObject]) throws -> PythonConvertible) {
         self.init(fn)
+        self.name = name
+    }
+
+    public init(name: StaticString?, awaitable fn: @escaping ([PythonObject]) async throws -> PythonConvertible) {
+        function = PyFunction { argumentsAsTuple in
+            let swiftArgs = argumentsAsTuple.map { $0 }
+            let loop = Python.import("asyncio").get_running_loop()
+            let future = loop.create_future()
+            Task {
+                var err: Error?
+                var result: PythonConvertible?
+                do {
+                    result = try await fn(swiftArgs)
+                } catch {
+                    err = error
+                }
+                Self.completeFuture(loop, future, result, err)
+            }
+            return future
+        }
         self.name = name
     }
 
@@ -1709,6 +1795,47 @@ public struct PythonFunction {
     public init(name: StaticString?, _ fn: @escaping ([PythonObject], [(key: String, value: PythonObject)]) throws -> PythonConvertible) {
         self.init(fn)
         self.name = name
+    }
+
+    public init(name: StaticString?, awaitable fn: @escaping ([PythonObject], [(key: String, value: PythonObject)]) async throws -> PythonConvertible) {
+        function = PyFunction { argumentsAsTuple, keywordArgumentsAsDictionary in
+            let swiftArgs = argumentsAsTuple.map { $0 }
+            let swiftKwargs = keywordArgumentsAsDictionary.items().compactMap { keyAndValue -> (String, PythonObject)? in
+                guard let key = String(keyAndValue.tuple2.0) else {
+                    return nil
+                }
+                return (key, keyAndValue.tuple2.1)
+            }
+
+            let loop = Python.import("asyncio").get_running_loop()
+            let future = loop.create_future()
+            Task {
+                var err: Error?
+                var result: PythonConvertible?
+                do {
+                    result = try await fn(swiftArgs, swiftKwargs)
+                } catch {
+                    err = error
+                }
+                Self.completeFuture(loop, future, result, err)
+            }
+            return future
+        }
+        self.name = name
+    }
+
+    private static func completeFuture(
+        _ loop: PythonObject, _ future: PythonObject, _ result: PythonConvertible?, _ error: Error?) {
+        withGIL {
+            if let error {
+                loop.call_soon_threadsafe(future.set_exception, Python.ValueError("\(error)"))
+            } else {
+                guard let result else {
+                    fatalError("Result should exist if error is nil.")
+                }
+                loop.call_soon_threadsafe(future.set_result, result)
+            }
+        }
     }
 }
 
@@ -1736,9 +1863,9 @@ extension PythonFunction : PythonConvertible {
         if let name {
             switch function.callingConvention {
             case .varArgs:
-                methodDefinition = PythonFunction.sharedMethodDefinition(name: name)
+                methodDefinition = PythonFunction.methodDefinition(name: name)
             case .varArgsWithKeywords:
-                methodDefinition = PythonFunction.sharedMethodWithKeywordsDefinition(name: name)
+                methodDefinition = PythonFunction.methodWithKeywordsDefinition(name: name)
             }
         } else {
             switch function.callingConvention {
@@ -1782,7 +1909,7 @@ fileprivate extension PythonFunction {
         return pointer
     }()
 
-    static func sharedMethodDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
+    static func methodDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
         let namePointer = UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self)
 
         let methodImplementationPointer = unsafeBitCast(
@@ -1825,7 +1952,7 @@ fileprivate extension PythonFunction {
         return pointer
     }()
 
-    static func sharedMethodWithKeywordsDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
+    static func methodWithKeywordsDefinition(name: StaticString) -> UnsafeMutablePointer<PyMethodDef> {
         let namePointer = UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: Int8.self)
 
         let methodImplementationPointer = unsafeBitCast(
@@ -1911,16 +2038,51 @@ fileprivate extension PythonFunction {
     }
 }
 
+//===----------------------------------------------------------------------===//
+// PythonModule functions that need access to PyRef members.
+//===----------------------------------------------------------------------===//
+
+extension PythonModule {
+    func addObject(_ object: PyObjectPointer, named: StaticString) -> Bool {
+        let module = pythonObject.borrowedPyObject
+        let result = PyModule_AddObject(
+            module,
+            UnsafeRawPointer(named.utf8Start).assumingMemoryBound(to: Int8.self),
+            object)
+
+        guard result >= 0 else {
+            fatalError("Failed to add type to module: \(result)")
+        }
+        return true
+    }
+
+    func addType(_ typeDefinition: PyTypeObjectPointer) -> Bool {
+        let result = PyType_Ready(typeDefinition)
+        guard result >= 0 else {
+            fatalError("Failed to add type to module: \(result)")
+        }
+        return true
+    }
+
+    static var testAwaitableFunction: PythonFunction?
+    static let getTestAwaitable: PyCFunction = { _, _ in
+        guard let testAwaitableFunction = Self.testAwaitableFunction else {
+            fatalError("testAwaitableFunction not set")
+        }
+        return testAwaitableFunction.pythonObject.ownedPyObject
+    }
+}
+
 extension PythonObject: Error {}
 
 // From Python's C Headers:
 struct PyMethodDef {
     /// The name of the built-in function/method
-    var ml_name: UnsafePointer<Int8>
+    var ml_name: UnsafePointer<Int8>?
 
     /// The C function that implements it.
     /// Since this accepts multiple function signatures, the Swift type must be opaque here.
-    var ml_meth: OpaquePointer
+    var ml_meth: OpaquePointer?
 
     /// Combination of METH_xxx flags, which mostly describe the args expected by the C func
     var ml_flags: Int32
