@@ -748,7 +748,7 @@ class PythonThread {
     private static var sharedState: PyGILState_State?
 
     /// Enter the GIL and initialize Python thread state.
-    public static func enterGIL() {
+    static func enterGIL() {
         guard Self.sharedState == nil else {
             fatalError("The GIL is already held by this thread.")
         }
@@ -756,7 +756,7 @@ class PythonThread {
     }
 
     /// Exit the GIL.
-    public static func leaveGIL() {
+    static func leaveGIL() {
         guard let state = Self.sharedState else {
             fatalError("The GIL is not held by this thread.")
         }
