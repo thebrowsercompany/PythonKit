@@ -744,38 +744,39 @@ public struct PythonInterface {
 // See https://docs.python.org/3/c-api/init.html#non-python-created-threads
 //===----------------------------------------------------------------------===//
 
-public class PythonThread {
-    /// Declare an instance to automatically enter/leave within the
-    /// current scope, RIAA-style. Or manually call class methods below.
-    init() {
-        Self.enterGIL()
-    }
-
-    deinit {
-        Self.leaveGIL()
-    }
-
+class PythonThread {
     private static var sharedState: PyGILState_State?
 
     /// Enter the GIL and initialize Python thread state.
     public static func enterGIL() {
-        guard Self.sharedState == nil else { return }
+        guard Self.sharedState == nil else {
+            fatalError("The GIL is already held by this thread.")
+        }
         Self.sharedState = PyGILState_Ensure()
     }
 
     /// Exit the GIL.
     public static func leaveGIL() {
-        guard let state = Self.sharedState else { return }
+        guard let state = Self.sharedState else {
+            fatalError("The GIL is not held by this thread.")
+        }
         PyGILState_Release(state)
         Self.sharedState = nil
     }
+}
 
-    /// Execute body while holding the GIL.
-    public static func withGIL<T>(_ body: () throws -> T) rethrows -> T {
-        enterGIL()
-        defer { leaveGIL() }
-        return try body()
-    }
+/// Execute body while holding the GIL.
+public func withGIL<T>(_ body: () throws -> T) rethrows -> T {
+    PythonThread.enterGIL()
+    defer { PythonThread.leaveGIL() }
+    return try body()
+}
+
+/// Leave the GIL, execute the body, then re-enter the GIL.
+public func withoutGIL<T>(_ body: () throws -> T) rethrows -> T {
+    PythonThread.leaveGIL()
+    defer { PythonThread.enterGIL() }
+    return try body()
 }
 
 //===----------------------------------------------------------------------===//
@@ -1737,18 +1738,7 @@ public struct PythonFunction {
                 } catch {
                     err = error
                 }
-
-                let gilState = PyGILState_Ensure()
-                defer { PyGILState_Release(gilState) }
-
-                if let err {
-                    loop.call_soon_threadsafe(future.set_exception, Python.ValueError("\(err)"))
-                } else {
-                    guard let result else {
-                        fatalError("Result should exist if err is nil.")
-                    }
-                    loop.call_soon_threadsafe(future.set_result, result)
-                }
+                Self.completeFuture(loop, future, result, err)
             }
             return future
         }
@@ -1780,18 +1770,7 @@ public struct PythonFunction {
                 } catch {
                     err = error
                 }
-
-                let gilState = PyGILState_Ensure()
-                defer { PyGILState_Release(gilState) }
-
-                if let err {
-                    loop.call_soon_threadsafe(future.set_exception, Python.ValueError("\(err)"))
-                } else {
-                    guard let result else {
-                        fatalError("Result should exist if err is nil.")
-                    }
-                    loop.call_soon_threadsafe(future.set_result, result)
-                }
+                Self.completeFuture(loop, future, result, err)
             }
             return future
         }
@@ -1838,22 +1817,25 @@ public struct PythonFunction {
                 } catch {
                     err = error
                 }
-
-                let gilState = PyGILState_Ensure()
-                defer { PyGILState_Release(gilState) }
-
-                if let err {
-                    loop.call_soon_threadsafe(future.set_exception, Python.ValueError("\(err)"))
-                } else {
-                    guard let result else {
-                        fatalError("Result should exist if err is nil.")
-                    }
-                    loop.call_soon_threadsafe(future.set_result, result)
-                }
+                Self.completeFuture(loop, future, result, err)
             }
             return future
         }
         self.name = name
+    }
+
+    private static func completeFuture(
+        _ loop: PythonObject, _ future: PythonObject, _ result: PythonConvertible?, _ error: Error?) {
+        withGIL {
+            if let error {
+                loop.call_soon_threadsafe(future.set_exception, Python.ValueError("\(error)"))
+            } else {
+                guard let result else {
+                    fatalError("Result should exist if error is nil.")
+                }
+                loop.call_soon_threadsafe(future.set_result, result)
+            }
+        }
     }
 }
 
