@@ -745,37 +745,39 @@ public struct PythonInterface {
 //===----------------------------------------------------------------------===//
 
 class PythonThread {
-    private static var sharedState: PyGILState_State?
+    private var state: PyGILState_State?
 
     /// Enter the GIL and initialize Python thread state.
-    static func enterGIL() {
-        guard Self.sharedState == nil else {
+    func enterGIL() {
+        guard state == nil else {
             fatalError("The GIL is already held by this thread.")
         }
-        Self.sharedState = PyGILState_Ensure()
+        state = PyGILState_Ensure()
     }
 
     /// Exit the GIL.
-    static func leaveGIL() {
-        guard let state = Self.sharedState else {
+    func leaveGIL() {
+        guard let s = state else {
             fatalError("The GIL is not held by this thread.")
         }
-        PyGILState_Release(state)
-        Self.sharedState = nil
+        PyGILState_Release(s)
+        state = nil
     }
 }
 
 /// Execute body while holding the GIL.
 public func withGIL<T>(_ body: () throws -> T) rethrows -> T {
-    PythonThread.enterGIL()
-    defer { PythonThread.leaveGIL() }
+    let thread = PythonThread()
+    thread.enterGIL()
+    defer { thread.leaveGIL() }
     return try body()
 }
 
 /// Leave the GIL, execute the body, then re-enter the GIL.
 public func withoutGIL<T>(_ body: () throws -> T) rethrows -> T {
-    PythonThread.leaveGIL()
-    defer { PythonThread.enterGIL() }
+    let thread = PythonThread()
+    thread.leaveGIL()
+    defer { thread.enterGIL() }
     return try body()
 }
 
