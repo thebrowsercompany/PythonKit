@@ -792,6 +792,14 @@ public func withoutGIL<T>(_ body: () throws -> T) rethrows -> T {
     return try body()
 }
 
+/// Async version of `withoutGIL`.
+public func withoutGIL<T>(_ body: () async throws -> T) async rethrows -> T {
+    let thread = PythonThread()
+    thread.leaveGIL()
+    defer { thread.enterGIL() }
+    return try await body()
+}
+
 //===----------------------------------------------------------------------===//
 // Helpers for Python tuple types
 //===----------------------------------------------------------------------===//
