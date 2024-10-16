@@ -55,7 +55,12 @@ final class PyReference {
     }
 
     deinit {
-        Py_DecRef(pointer)
+        // AIQ-230: This is causing crashing in the evals.
+        // We don't use PythonKit in production, so in the absence of a proper fix
+        // we're commenting this out.
+        //
+        // This change should be reverted if we ever use PythonKit in production.
+        // Py_DecRef(pointer)
     }
 
     var borrowedPyObject: PyObjectPointer {
